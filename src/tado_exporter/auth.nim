@@ -48,8 +48,6 @@ proc loadToken*(auth: TadoAuth): bool =
       refreshToken: j{"refresh_token"}.getStr(),
       expiresAt: j{"expires_at"}.getFloat(),
     )
-    if auth.token.refreshToken == "":
-      return false
     info("Loaded token from ", auth.tokenPath)
     return true
   except:
@@ -85,7 +83,7 @@ proc deviceCodeFlow*(auth: TadoAuth) {.async.} =
   defer: client.close()
 
   # Step 1: Request device code
-  let body = &"client_id={auth.clientId}&scope=home.user"
+  let body = &"client_id={auth.clientId}&scope=home.user offline_access"
   let resp = await client.request(DeviceAuthorizeUrl, httpMethod = HttpPost,
     body = body,
     headers = newHttpHeaders({"Content-Type": "application/x-www-form-urlencoded"}))
@@ -156,8 +154,12 @@ proc initAuth*(auth: TadoAuth) {.async.} =
   if auth.loadToken():
     # Check if token needs refresh
     if epochTime() >= auth.token.expiresAt:
-      info("Token expired, refreshing...")
-      await auth.refreshToken()
+      if auth.token.refreshToken == "":
+        info("Token expired and no refresh token, starting device authorization flow...")
+        await auth.deviceCodeFlow()
+      else:
+        info("Token expired, refreshing...")
+        await auth.refreshToken()
   else:
     info("No token found, starting device authorization flow...")
     await auth.deviceCodeFlow()
@@ -165,8 +167,12 @@ proc initAuth*(auth: TadoAuth) {.async.} =
 proc getAccessToken*(auth: TadoAuth): Future[string] {.async.} =
   ## Return a valid access token, refreshing if needed.
   if epochTime() >= auth.token.expiresAt:
-    await auth.refreshToken()
+    if auth.token.refreshToken == "":
+      info("Token expired and no refresh token, starting device authorization flow...")
+      await auth.deviceCodeFlow()
+    else:
+      await auth.refreshToken()
   return auth.token.accessToken
 
 proc isAuthenticated*(auth: TadoAuth): bool =
-  auth.token.accessToken != "" and auth.token.refreshToken != ""
+  auth.token.accessToken != ""
