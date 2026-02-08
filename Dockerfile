@@ -8,8 +8,11 @@ COPY tests/ tests/
 RUN nim c -r tests/test_metrics.nim
 RUN nim c -r tests/test_collector.nim
 
+ARG VERSION=dev
+
 # Build release binary
 RUN nim c \
+    -d:Version=$VERSION \
     -d:release \
     -d:ssl \
     --opt:size \

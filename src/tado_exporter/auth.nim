@@ -73,7 +73,7 @@ proc refreshToken*(auth: TadoAuth) {.async.} =
   let j = parseJson(respBody)
   auth.token = TokenData(
     accessToken: j["access_token"].getStr(),
-    refreshToken: j["refresh_token"].getStr(),
+    refreshToken: j{"refresh_token"}.getStr(auth.token.refreshToken),
     expiresAt: epochTime() + j["expires_in"].getFloat() - 30,
   )
   auth.saveToken()
@@ -123,12 +123,16 @@ proc deviceCodeFlow*(auth: TadoAuth) {.async.} =
 
     if pollResp.code == Http200:
       let tokenJson = parseJson(pollRespBody)
+      debug("Token response: ", pollRespBody)
+      let refreshTok = tokenJson{"refresh_token"}.getStr("")
       auth.token = TokenData(
         accessToken: tokenJson["access_token"].getStr(),
-        refreshToken: tokenJson["refresh_token"].getStr(),
+        refreshToken: refreshTok,
         expiresAt: epochTime() + tokenJson["expires_in"].getFloat() - 30,
       )
       auth.saveToken()
+      if refreshTok == "":
+        warn("No refresh_token in token response — token refresh will not work")
       info("Device authorization completed successfully")
       return
 

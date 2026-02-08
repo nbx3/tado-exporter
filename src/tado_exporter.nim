@@ -5,6 +5,8 @@
 import std/[asyncdispatch, asynchttpserver, os, strutils, strformat, logging]
 import tado_exporter/[auth, client, collector]
 
+const Version {.strdefine.} = "dev"
+
 const
   MinPollInterval = 300  # 5 minute safety floor
 
@@ -68,7 +70,7 @@ proc main() {.async.} =
   addHandler(logger)
 
   let cfg = loadConfig()
-  info("Tado Exporter starting")
+  info(&"Tado Exporter {Version} starting")
   info(&"  Port: {cfg.port}")
   info(&"  Token path: {cfg.tokenPath}")
   info(&"  Poll interval: {cfg.pollInterval}s")
