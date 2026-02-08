@@ -1,7 +1,7 @@
 # Nim build artifacts
 nimcache/
 src/nimcache/
-tado_exporter
+/tado_exporter
 *.exe
 *.o
 *.a
