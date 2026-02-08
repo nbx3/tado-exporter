@@ -1,5 +1,5 @@
 import std/[unittest, json, strutils]
-import ../src/tado_exporter/[metrics, collector]
+import ../src/tado_exporter/[metrics, collector, client]
 
 suite "collectWeather":
   test "outside temperature and solar intensity":
@@ -147,4 +147,34 @@ suite "collectZoneStates":
     var b = newMetricsBuilder()
     let zones = @[ZoneInfo(id: 1, name: "Test", zoneType: "HEATING")]
     b.collectZoneStates(newJNull(), zones, 12345)
+    check b.output() == ""
+
+suite "collectRateLimit":
+  test "emits metrics when rate limit is known":
+    var b = newMetricsBuilder()
+    var rl = newRateLimit()
+    rl.remaining = 42
+    rl.exhausted = false
+    rl.lastUpdated = 1000.0
+    b.collectRateLimit(rl)
+    let output = b.output()
+    check "tado_exporter_ratelimit_remaining 42" in output
+    check "tado_exporter_ratelimit_exhausted 0" in output
+
+  test "emits exhausted state":
+    var b = newMetricsBuilder()
+    var rl = newRateLimit()
+    rl.remaining = 0
+    rl.exhausted = true
+    rl.refillInSecs = 3600
+    rl.lastUpdated = 1000.0
+    b.collectRateLimit(rl)
+    let output = b.output()
+    check "tado_exporter_ratelimit_remaining 0" in output
+    check "tado_exporter_ratelimit_exhausted 1" in output
+
+  test "no output when lastUpdated is 0":
+    var b = newMetricsBuilder()
+    let rl = newRateLimit()
+    b.collectRateLimit(rl)
     check b.output() == ""

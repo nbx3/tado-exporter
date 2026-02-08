@@ -5,6 +5,9 @@
 import std/[asyncdispatch, asynchttpserver, os, strutils, strformat, logging]
 import tado_exporter/[auth, client, collector]
 
+const
+  MinPollInterval = 300  # 5 minute safety floor
+
 type
   Config = object
     port: int
@@ -12,10 +15,15 @@ type
     pollInterval: int  # seconds
 
 proc loadConfig(): Config =
+  var interval = getEnv("TADO_POLL_INTERVAL", "2700").parseInt()
+  if interval < MinPollInterval:
+    warn(&"TADO_POLL_INTERVAL={interval}s is below minimum {MinPollInterval}s, clamping")
+    interval = MinPollInterval
+
   Config(
     port: getEnv("TADO_PORT", "9617").parseInt(),
     tokenPath: getEnv("TADO_TOKEN_PATH", "/data/tado-token.json"),
-    pollInterval: getEnv("TADO_POLL_INTERVAL", "60").parseInt(),
+    pollInterval: interval,
   )
 
 const landingPage = """<!DOCTYPE html>
@@ -25,10 +33,23 @@ const landingPage = """<!DOCTYPE html>
 
 proc backgroundPoller(c: TadoCollector, intervalSecs: int) {.async.} =
   ## Poll Tado API in the background at the configured interval.
+  ## Pauses polling when the Tado API rate limit is exhausted.
   while true:
+    # Check rate limit before polling
+    if c.client.isRateLimited():
+      let waitSecs = c.client.rateLimitSecsRemaining()
+      if waitSecs > 0:
+        warn(&"Rate limit exhausted, sleeping {waitSecs}s until refill")
+        await sleepAsync(waitSecs * 1000)
+        continue
+
     try:
       await c.poll()
-      debug("Poll completed successfully")
+      let rl = c.client.rateLimit
+      if rl.remaining >= 0:
+        debug(&"Poll completed, {rl.remaining} API requests remaining today")
+      else:
+        debug("Poll completed successfully")
     except:
       warn(&"Background poll failed: {getCurrentExceptionMsg()}")
     await sleepAsync(intervalSecs * 1000)

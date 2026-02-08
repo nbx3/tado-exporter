@@ -18,7 +18,7 @@ type
     zoneType*: string
 
   TadoCollector* = ref object
-    client: TadoClient
+    client*: TadoClient
     homeId*: int
     zones: seq[ZoneInfo]
     cachedOutput*: string
@@ -126,6 +126,15 @@ proc collectZoneStates*(b: var MetricsBuilder, zoneStates: JsonNode,
       "Whether the zone heating is powered on (1=yes, 0=no)",
       if power == "ON": 1.0 else: 0.0, labels)
 
+proc collectRateLimit*(b: var MetricsBuilder, rl: RateLimit) =
+  if rl.lastUpdated == 0.0: return
+  b.addGauge("tado_exporter_ratelimit_remaining",
+    "Tado API requests remaining in current rate limit window",
+    float(rl.remaining))
+  b.addGauge("tado_exporter_ratelimit_exhausted",
+    "Whether Tado API rate limit is exhausted (1=yes, 0=no)",
+    if rl.exhausted: 1.0 else: 0.0)
+
 proc poll*(c: TadoCollector) {.async.} =
   ## Fetch current state and build metrics output.
   let startTime = epochTime()
@@ -146,6 +155,7 @@ proc poll*(c: TadoCollector) {.async.} =
   b.collectPresence(state)
   b.collectWeather(weather)
   b.collectZoneStates(zoneStates, c.zones, c.homeId)
+  b.collectRateLimit(c.client.rateLimit)
 
   let success = if state.kind != JNull and weather.kind != JNull and zoneStates.kind != JNull: 1.0 else: 0.0
   if success == 1.0:
