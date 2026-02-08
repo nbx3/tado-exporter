@@ -13,9 +13,9 @@ proc safeGet(c: TadoClient, path: string): Future[JsonNode] {.async.} =
 
 type
   ZoneInfo* = object
-    id: int
-    name: string
-    zoneType: string
+    id*: int
+    name*: string
+    zoneType*: string
 
   TadoCollector* = ref object
     client: TadoClient
@@ -54,7 +54,7 @@ proc discover*(c: TadoCollector) {.async.} =
   for z in c.zones:
     info(&"  Zone {z.id}: {z.name} ({z.zoneType})")
 
-proc collectWeather(b: var MetricsBuilder, weather: JsonNode) =
+proc collectWeather*(b: var MetricsBuilder, weather: JsonNode) =
   if weather.kind == JNull: return
   let temp = weather{"outsideTemperature"}{"celsius"}.getFloat()
   b.addGauge("tado_temperature_outside_celsius",
@@ -64,15 +64,15 @@ proc collectWeather(b: var MetricsBuilder, weather: JsonNode) =
   b.addGauge("tado_solar_intensity_percentage",
     "Solar intensity percentage", solar)
 
-proc collectPresence(b: var MetricsBuilder, state: JsonNode) =
+proc collectPresence*(b: var MetricsBuilder, state: JsonNode) =
   if state.kind == JNull: return
   let presence = state{"presence"}.getStr("")
   let isHome = if presence == "HOME": 1.0 else: 0.0
   b.addGauge("tado_is_resident_present",
     "Whether any resident is at home (1=yes, 0=no)", isHome)
 
-proc collectZoneStates(b: var MetricsBuilder, zoneStates: JsonNode,
-                       zones: seq[ZoneInfo], homeId: int) =
+proc collectZoneStates*(b: var MetricsBuilder, zoneStates: JsonNode,
+                        zones: seq[ZoneInfo], homeId: int) =
   if zoneStates.kind == JNull: return
   let states = zoneStates{"zoneStates"}
   if states.isNil or states.kind != JObject: return
@@ -130,6 +130,7 @@ proc poll*(c: TadoCollector) {.async.} =
   ## Fetch current state and build metrics output.
   let startTime = epochTime()
   var b = newMetricsBuilder()
+  debug("Starting metrics collection")
 
   # Fire off all requests concurrently; each can fail independently
   let
@@ -151,6 +152,11 @@ proc poll*(c: TadoCollector) {.async.} =
     c.authValid = true
 
   let duration = epochTime() - startTime
+  if success == 1.0:
+    info(&"Scrape completed in {duration:.3f}s")
+  else:
+    warn(&"Scrape completed with errors in {duration:.3f}s")
+
   b.addGauge("tado_exporter_scrape_duration_seconds",
     "Time taken to collect Tado metrics", duration)
   b.addGauge("tado_exporter_scrape_success",

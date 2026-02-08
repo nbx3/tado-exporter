@@ -34,7 +34,16 @@ proc backgroundPoller(c: TadoCollector, intervalSecs: int) {.async.} =
     await sleepAsync(intervalSecs * 1000)
 
 proc main() {.async.} =
-  let logger = newConsoleLogger(fmtStr = "$datetime $levelname ")
+  let levelStr = getEnv("LOG_LEVEL", "INFO").toUpperAscii()
+  let level = case levelStr
+    of "DEBUG": lvlDebug
+    of "INFO": lvlInfo
+    of "WARN", "WARNING": lvlWarn
+    of "ERROR": lvlError
+    of "FATAL": lvlFatal
+    of "NONE": lvlNone
+    else: lvlInfo
+  let logger = newConsoleLogger(level, fmtStr = "$datetime $levelname ")
   addHandler(logger)
 
   let cfg = loadConfig()
@@ -65,20 +74,29 @@ proc main() {.async.} =
   var server = newAsyncHttpServer()
 
   proc handler(req: Request) {.async.} =
-    case req.url.path
-    of "/metrics":
-      await req.respond(Http200, tadoCollector.cachedOutput,
-        newHttpHeaders({"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}))
-    of "/health":
-      if tadoCollector.lastSuccess:
-        await req.respond(Http200, "OK")
+    debug(&"{req.reqMethod} {req.url.path}")
+    try:
+      case req.url.path
+      of "/metrics":
+        await req.respond(Http200, tadoCollector.cachedOutput,
+          newHttpHeaders({"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}))
+      of "/health":
+        if tadoCollector.lastSuccess:
+          await req.respond(Http200, "OK")
+        else:
+          await req.respond(Http503, "Last poll failed")
+      of "/":
+        await req.respond(Http200, landingPage,
+          newHttpHeaders({"Content-Type": "text/html"}))
       else:
-        await req.respond(Http503, "Last poll failed")
-    of "/":
-      await req.respond(Http200, landingPage,
-        newHttpHeaders({"Content-Type": "text/html"}))
-    else:
-      await req.respond(Http404, "Not Found")
+        warn(&"404 {req.reqMethod} {req.url.path}")
+        await req.respond(Http404, "Not Found")
+    except:
+      error(&"Error handling {req.reqMethod} {req.url.path}: {getCurrentExceptionMsg()}")
+      try:
+        await req.respond(Http500, "Internal Server Error")
+      except:
+        error(&"Failed to send error response: {getCurrentExceptionMsg()}")
 
   info(&"Listening on :{cfg.port}")
   server.listen(Port(cfg.port))

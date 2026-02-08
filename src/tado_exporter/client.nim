@@ -46,6 +46,7 @@ proc get*(c: TadoClient, path: string): Future[JsonNode] {.async.} =
     body = await resp.body
 
   if resp.code != Http200:
+    error(&"API request failed: {path} — HTTP {resp.code}")
     raise newException(IOError, &"API request failed: {path} — HTTP {resp.code}")
 
   result = parseJson(body)
