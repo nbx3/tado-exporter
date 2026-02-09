@@ -6,6 +6,7 @@ import auth
 
 const
   BaseUrl = "https://my.tado.com/api/v2"
+  HopsUrl* = "https://hops.tado.com"
 
 type
   RateLimit* = object
@@ -65,15 +66,14 @@ proc parseRateLimitHeader(c: TadoClient, resp: Response | AsyncResponse) =
   elif remaining >= 0 and remaining <= 10:
     warn(&"Tado API rate limit low: {remaining} requests remaining")
 
-proc get*(c: TadoClient, path: string): Future[JsonNode] {.async.} =
-  ## GET request to the Tado API with automatic token management.
-  ## Re-attempts with a fresh token on 401.
+proc doGet(c: TadoClient, baseUrl, path: string): Future[JsonNode] {.async.} =
+  ## Internal GET with automatic token management and 401 retry.
   let token = await c.auth.getAccessToken()
 
   let client = newAsyncHttpClient()
   defer: client.close()
 
-  let url = &"{BaseUrl}{path}"
+  let url = &"{baseUrl}{path}"
   let headers = newHttpHeaders({
     "Authorization": &"Bearer {token}",
   })
@@ -103,3 +103,11 @@ proc get*(c: TadoClient, path: string): Future[JsonNode] {.async.} =
     raise newException(IOError, &"API request failed: {path} — HTTP {resp.code}")
 
   result = parseJson(body)
+
+proc get*(c: TadoClient, path: string): Future[JsonNode] {.async.} =
+  ## GET request to the classic Tado API (my.tado.com).
+  result = await c.doGet(BaseUrl, path)
+
+proc getHops*(c: TadoClient, path: string): Future[JsonNode] {.async.} =
+  ## GET request to the Tado X HOPS API (hops.tado.com).
+  result = await c.doGet(HopsUrl, path)

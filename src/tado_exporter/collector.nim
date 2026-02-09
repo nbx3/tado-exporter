@@ -11,6 +11,13 @@ proc safeGet(c: TadoClient, path: string): Future[JsonNode] {.async.} =
     warn(&"Failed to fetch {path}: {getCurrentExceptionMsg()}")
     result = newJNull()
 
+proc safeGetHops(c: TadoClient, path: string): Future[JsonNode] {.async.} =
+  try:
+    result = await c.getHops(path)
+  except:
+    warn(&"Failed to fetch HOPS {path}: {getCurrentExceptionMsg()}")
+    result = newJNull()
+
 type
   ZoneInfo* = object
     id*: int
@@ -24,13 +31,15 @@ type
     cachedOutput*: string
     lastSuccess*: bool
     authValid*: bool
+    isTadoX*: bool
 
-proc newTadoCollector*(client: TadoClient): TadoCollector =
+proc newTadoCollector*(client: TadoClient, isTadoX: bool = false): TadoCollector =
   TadoCollector(
     client: client,
     cachedOutput: "",
     lastSuccess: false,
     authValid: true,
+    isTadoX: isTadoX,
   )
 
 proc discover*(c: TadoCollector) {.async.} =
@@ -42,15 +51,25 @@ proc discover*(c: TadoCollector) {.async.} =
   c.homeId = homes[0]["id"].getInt()
   info(&"Discovered home ID: {c.homeId}")
 
-  let zonesJson = await c.client.get(&"/homes/{c.homeId}/zones")
   c.zones = @[]
-  for z in zonesJson:
-    c.zones.add(ZoneInfo(
-      id: z["id"].getInt(),
-      name: z["name"].getStr(),
-      zoneType: z["type"].getStr(),
-    ))
-  info(&"Discovered {c.zones.len} zones")
+  if c.isTadoX:
+    let roomsJson = await c.client.getHops(&"/homes/{c.homeId}/rooms")
+    for r in roomsJson:
+      c.zones.add(ZoneInfo(
+        id: r["id"].getInt(),
+        name: r["name"].getStr(),
+        zoneType: "HEATING",
+      ))
+    info(&"Discovered {c.zones.len} rooms (Tado X)")
+  else:
+    let zonesJson = await c.client.get(&"/homes/{c.homeId}/zones")
+    for z in zonesJson:
+      c.zones.add(ZoneInfo(
+        id: z["id"].getInt(),
+        name: z["name"].getStr(),
+        zoneType: z["type"].getStr(),
+      ))
+    info(&"Discovered {c.zones.len} zones")
   for z in c.zones:
     info(&"  Zone {z.id}: {z.name} ({z.zoneType})")
 
@@ -126,6 +145,61 @@ proc collectZoneStates*(b: var MetricsBuilder, zoneStates: JsonNode,
       "Whether the zone heating is powered on (1=yes, 0=no)",
       if power == "ON": 1.0 else: 0.0, labels)
 
+proc collectRooms*(b: var MetricsBuilder, rooms: JsonNode,
+                    zones: seq[ZoneInfo], homeId: int) =
+  ## Collect metrics from Tado X HOPS rooms response.
+  if rooms.kind != JArray: return
+
+  # Build room ID -> ZoneInfo lookup
+  var zoneMap: Table[int, ZoneInfo]
+  for z in zones:
+    zoneMap[z.id] = z
+
+  for room in rooms:
+    let roomId = room{"id"}.getInt(-1)
+    if roomId < 0: continue
+    let zone = zoneMap.getOrDefault(roomId)
+    if zone.name == "": continue
+
+    let labels = {
+      "zone_name": zone.name,
+      "zone_id": $roomId,
+      "home_id": $homeId,
+      "zone_type": zone.zoneType,
+    }
+
+    # Measured temperature
+    let measuredTemp = room{"sensorDataPoints"}{"insideTemperature"}{"value"}.getFloat()
+    b.addGauge("tado_temperature_measured_celsius",
+      "Measured inside temperature", measuredTemp, labels)
+
+    # Set temperature
+    let setTemp = room{"setting"}{"temperature"}{"value"}.getFloat()
+    b.addGauge("tado_temperature_set_celsius",
+      "Target temperature setting", setTemp, labels)
+
+    # Humidity
+    let humidity = room{"sensorDataPoints"}{"humidity"}{"percentage"}.getFloat()
+    b.addGauge("tado_humidity_measured_percentage",
+      "Measured humidity percentage", humidity, labels)
+
+    # Heating power
+    let heatingPower = room{"heatingPower"}{"percentage"}.getFloat()
+    b.addGauge("tado_heating_power_percentage",
+      "Heating power percentage", heatingPower, labels)
+
+    # Window open
+    let windowOpen = room{"openWindow"}{"activated"}.getBool(false)
+    b.addGauge("tado_is_window_open",
+      "Whether an open window is detected (1=yes, 0=no)",
+      if windowOpen: 1.0 else: 0.0, labels)
+
+    # Zone powered (setting.power == "ON")
+    let power = room{"setting"}{"power"}.getStr("")
+    b.addGauge("tado_is_zone_powered",
+      "Whether the zone heating is powered on (1=yes, 0=no)",
+      if power == "ON": 1.0 else: 0.0, labels)
+
 proc collectRateLimit*(b: var MetricsBuilder, rl: RateLimit) =
   if rl.lastUpdated == 0.0: return
   b.addGauge("tado_exporter_ratelimit_remaining",
@@ -145,19 +219,30 @@ proc poll*(c: TadoCollector) {.async.} =
   let
     fState = c.client.safeGet(&"/homes/{c.homeId}/state")
     fWeather = c.client.safeGet(&"/homes/{c.homeId}/weather")
-    fZoneStates = c.client.safeGet(&"/homes/{c.homeId}/zoneStates")
 
-  let
-    state = await fState
-    weather = await fWeather
-    zoneStates = await fZoneStates
-
-  b.collectPresence(state)
-  b.collectWeather(weather)
-  b.collectZoneStates(zoneStates, c.zones, c.homeId)
-  b.collectRateLimit(c.client.rateLimit)
-
-  let success = if state.kind != JNull and weather.kind != JNull and zoneStates.kind != JNull: 1.0 else: 0.0
+  var success: float
+  if c.isTadoX:
+    let fRooms = c.client.safeGetHops(&"/homes/{c.homeId}/rooms")
+    let
+      state = await fState
+      weather = await fWeather
+      rooms = await fRooms
+    b.collectPresence(state)
+    b.collectWeather(weather)
+    b.collectRooms(rooms, c.zones, c.homeId)
+    b.collectRateLimit(c.client.rateLimit)
+    success = if state.kind != JNull and weather.kind != JNull and rooms.kind != JNull: 1.0 else: 0.0
+  else:
+    let fZoneStates = c.client.safeGet(&"/homes/{c.homeId}/zoneStates")
+    let
+      state = await fState
+      weather = await fWeather
+      zoneStates = await fZoneStates
+    b.collectPresence(state)
+    b.collectWeather(weather)
+    b.collectZoneStates(zoneStates, c.zones, c.homeId)
+    b.collectRateLimit(c.client.rateLimit)
+    success = if state.kind != JNull and weather.kind != JNull and zoneStates.kind != JNull: 1.0 else: 0.0
   if success == 1.0:
     c.authValid = true
 

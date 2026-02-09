@@ -30,7 +30,7 @@ On startup, the exporter authenticates via OAuth2 device code flow (you visit a 
 |----------|----------------|---------|
 | **Weather** | `/homes/{id}/weather` | `tado_temperature_outside_celsius`, `tado_solar_intensity_percentage` |
 | **Presence** | `/homes/{id}/state` | `tado_is_resident_present` |
-| **Zone state** | `/homes/{id}/zoneStates` | `tado_temperature_measured_celsius{zone_name,zone_id,home_id,zone_type}`, `tado_temperature_set_celsius{…}`, `tado_humidity_measured_percentage{…}`, `tado_heating_power_percentage{…}`, `tado_is_window_open{…}`, `tado_is_zone_powered{…}` |
+| **Zone state** | `/homes/{id}/zoneStates` (v2) or HOPS `/homes/{id}/rooms` (Tado X) | `tado_temperature_measured_celsius{zone_name,zone_id,home_id,zone_type}`, `tado_temperature_set_celsius{…}`, `tado_humidity_measured_percentage{…}`, `tado_heating_power_percentage{…}`, `tado_is_window_open{…}`, `tado_is_zone_powered{…}` |
 | **Exporter** | — | `tado_exporter_scrape_duration_seconds`, `tado_exporter_scrape_success`, `tado_exporter_authentication_valid` |
 | **Rate limit** | — | `tado_exporter_ratelimit_remaining`, `tado_exporter_ratelimit_exhausted` |
 
@@ -76,8 +76,27 @@ All configuration is via environment variables:
 |----------|---------|-------------|
 | `TADO_PORT` | `9617` | Metrics server listen port |
 | `TADO_TOKEN_PATH` | `/data/tado-token.json` | Path to persist OAuth2 token |
+| `TADO_API` | `v2` | API mode: `v2` (classic Tado) or `x` (Tado X / HOPS) |
 | `TADO_POLL_INTERVAL` | `2700` | Seconds between API polls (minimum 300) |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`, `NONE` |
+
+### Tado X Support
+
+Tado X devices use a different API (`hops.tado.com`) with "rooms" instead of "zones". Set `TADO_API=x` to use the HOPS API:
+
+```yaml
+services:
+  tado-exporter:
+    image: ghcr.io/nbx3/tado-exporter:latest
+    environment:
+      - TADO_API=x
+    volumes:
+      - tado-data:/data
+    ports:
+      - "9618:9618"
+```
+
+The same metric names are emitted for both API modes, so dashboards and alerts work without changes. Weather and presence data still use the classic API in both modes.
 
 ### Rate Limiting
 

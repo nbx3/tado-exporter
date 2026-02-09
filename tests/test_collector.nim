@@ -149,6 +149,118 @@ suite "collectZoneStates":
     b.collectZoneStates(newJNull(), zones, 12345)
     check b.output() == ""
 
+suite "collectRooms":
+  test "full room with all metrics":
+    var b = newMetricsBuilder()
+    let zones = @[ZoneInfo(id: 1, name: "Hall", zoneType: "HEATING")]
+    let rooms = parseJson("""
+    [
+      {
+        "id": 1,
+        "name": "Hall",
+        "sensorDataPoints": {
+          "insideTemperature": {"value": 20.89, "precision": 0.1, "type": "TEMPERATURE", "timestamp": "2025-01-01T00:00:00Z"},
+          "humidity": {"percentage": 44.5, "type": "PERCENTAGE", "timestamp": "2025-01-01T00:00:00Z"}
+        },
+        "setting": {
+          "power": "ON",
+          "temperature": {"value": 21.0, "precision": 0.1, "type": "TEMPERATURE"}
+        },
+        "heatingPower": {
+          "percentage": 33.0,
+          "type": "PERCENTAGE",
+          "timestamp": "2025-01-01T00:00:00Z"
+        },
+        "openWindow": {
+          "activated": false
+        }
+      }
+    ]
+    """)
+    b.collectRooms(rooms, zones, 12345)
+    let output = b.output()
+    check "tado_temperature_measured_celsius{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 20.89" in output
+    check "tado_temperature_set_celsius{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 21" in output
+    check "tado_humidity_measured_percentage{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 44.5" in output
+    check "tado_heating_power_percentage{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 33" in output
+    check "tado_is_window_open{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 0" in output
+    check "tado_is_zone_powered{zone_name=\"Hall\",zone_id=\"1\",home_id=\"12345\",zone_type=\"HEATING\"} 1" in output
+
+  test "window open detected":
+    var b = newMetricsBuilder()
+    let zones = @[ZoneInfo(id: 2, name: "Bedroom", zoneType: "HEATING")]
+    let rooms = parseJson("""
+    [
+      {
+        "id": 2,
+        "name": "Bedroom",
+        "sensorDataPoints": {
+          "insideTemperature": {"value": 19.0},
+          "humidity": {"percentage": 50.0}
+        },
+        "setting": {
+          "power": "ON",
+          "temperature": {"value": 20.0}
+        },
+        "heatingPower": {"percentage": 0.0},
+        "openWindow": {"activated": true}
+      }
+    ]
+    """)
+    b.collectRooms(rooms, zones, 12345)
+    check "tado_is_window_open{zone_name=\"Bedroom\",zone_id=\"2\",home_id=\"12345\",zone_type=\"HEATING\"} 1" in b.output()
+
+  test "zone powered off":
+    var b = newMetricsBuilder()
+    let zones = @[ZoneInfo(id: 3, name: "Office", zoneType: "HEATING")]
+    let rooms = parseJson("""
+    [
+      {
+        "id": 3,
+        "name": "Office",
+        "sensorDataPoints": {
+          "insideTemperature": {"value": 17.0},
+          "humidity": {"percentage": 55.0}
+        },
+        "setting": {
+          "power": "OFF",
+          "temperature": {"value": 0.0}
+        },
+        "heatingPower": {"percentage": 0.0},
+        "openWindow": {"activated": false}
+      }
+    ]
+    """)
+    b.collectRooms(rooms, zones, 12345)
+    check "tado_is_zone_powered{zone_name=\"Office\",zone_id=\"3\",home_id=\"12345\",zone_type=\"HEATING\"} 0" in b.output()
+
+  test "unknown room ID skipped":
+    var b = newMetricsBuilder()
+    let zones = @[ZoneInfo(id: 1, name: "Hall", zoneType: "HEATING")]
+    let rooms = parseJson("""
+    [
+      {
+        "id": 99,
+        "name": "Unknown",
+        "sensorDataPoints": {
+          "insideTemperature": {"value": 20.0},
+          "humidity": {"percentage": 40.0}
+        },
+        "setting": {"power": "ON", "temperature": {"value": 21.0}},
+        "heatingPower": {"percentage": 50.0},
+        "openWindow": {"activated": false}
+      }
+    ]
+    """)
+    b.collectRooms(rooms, zones, 12345)
+    check b.output() == ""
+
+  test "JNull produces no output":
+    var b = newMetricsBuilder()
+    let zones = @[ZoneInfo(id: 1, name: "Test", zoneType: "HEATING")]
+    b.collectRooms(newJNull(), zones, 12345)
+    check b.output() == ""
+
 suite "collectRateLimit":
   test "emits metrics when rate limit is known":
     var b = newMetricsBuilder()

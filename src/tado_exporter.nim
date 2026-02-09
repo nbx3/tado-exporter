@@ -15,6 +15,7 @@ type
     port: int
     tokenPath: string
     pollInterval: int  # seconds
+    api: string  # "v2" (classic) or "x" (Tado X / HOPS)
 
 proc loadConfig(): Config =
   var interval = getEnv("TADO_POLL_INTERVAL", "2700").parseInt()
@@ -26,6 +27,7 @@ proc loadConfig(): Config =
     port: getEnv("TADO_PORT", "9617").parseInt(),
     tokenPath: getEnv("TADO_TOKEN_PATH", "/data/tado-token.json"),
     pollInterval: interval,
+    api: getEnv("TADO_API", "v2"),
   )
 
 const landingPage = """<!DOCTYPE html>
@@ -74,6 +76,7 @@ proc main() {.async.} =
   info(&"  Port: {cfg.port}")
   info(&"  Token path: {cfg.tokenPath}")
   info(&"  Poll interval: {cfg.pollInterval}s")
+  info(&"  API mode: {cfg.api}")
 
   # Initialize auth
   let tadoAuth = newTadoAuth(cfg.tokenPath)
@@ -81,7 +84,7 @@ proc main() {.async.} =
 
   # Create client and collector
   let tadoClient = newTadoClient(tadoAuth)
-  let tadoCollector = newTadoCollector(tadoClient)
+  let tadoCollector = newTadoCollector(tadoClient, isTadoX = (cfg.api == "x"))
 
   # Discover home and zones
   await tadoCollector.discover()
