@@ -138,6 +138,12 @@ nim c -r tests/test_collector.nim
 - **test_metrics** — Prometheus text format rendering: label escaping, value formatting, metric declaration
 - **test_collector** — All collector procs against JSON fixtures, including JNull safety
 
+## Grafana
+
+A ready-to-use dashboard is included at [`grafana/dashboard.json`](grafana/dashboard.json). Import it into Grafana via **Dashboards → Import → Upload JSON file**, and select your Prometheus datasource when prompted.
+
+It covers all exported metrics: exporter health, weather and occupancy, zone status tables, per-zone temperature/humidity/heating charts, and scrape diagnostics.
+
 ## Prometheus Config
 
 ```yaml
